@@ -230,7 +230,7 @@ const startRecording = async (page: Page, botConfig: BotConfig) => {
           };
           // --- END FUNCTION ---
 
-          findMediaElements().then(mediaElements => {
+          findMediaElements().then(async mediaElements => {
             if (mediaElements.length === 0) {
               return reject(
                 new Error(
@@ -802,7 +802,7 @@ const startRecording = async (page: Page, botConfig: BotConfig) => {
             scanForAllParticipants();
 
             // Monitor for new participants
-            const bodyObserver = new MutationObserver((mutationsList) => {
+            const bodyObserver = new MutationObserver(async (mutationsList) => {
                 for (const mutation of mutationsList) {
                     if (mutation.type === 'childList') {
                         mutation.addedNodes.forEach(node => {
@@ -936,6 +936,12 @@ const startRecording = async (page: Page, botConfig: BotConfig) => {
             const audioDataCache = [];
             const mediaStream = audioContext.createMediaStreamSource(stream); // Use our combined stream
             const recorder = audioContext.createScriptProcessor(4096, 1, 1);
+
+            // Ensure audio context is running
+            if (audioContext.state === 'suspended') {
+              await audioContext.resume();
+              (window as any).logBot("Audio context resumed from suspended state");
+            }
 
             recorder.onaudioprocess = async (event) => {
               // Check if server is ready AND socket is open

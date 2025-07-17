@@ -1,50 +1,23 @@
-name: vexa_dev
 services:
-  api-gateway:
+  openai-whisper:
     build:
       context: .
-      dockerfile: services/api-gateway/Dockerfile
-    ports:
-      - "${API_GATEWAY_HOST_PORT:-8056}:8000"
+      dockerfile: services/openai-whisper/Dockerfile
     environment:
-      - ADMIN_API_URL=http://admin-api:8001
-      - BOT_MANAGER_URL=http://bot-manager:8080
-      - TRANSCRIPTION_COLLECTOR_URL=http://transcription-collector:8000
-      - LOG_LEVEL=DEBUG
-    init: true
-    depends_on:
-      admin-api:
-        condition: service_started
-      bot-manager:
-        condition: service_started
-      transcription-collector:
-        condition: service_started
-    networks:
-      - vexa_default
-    restart: unless-stopped
-
-  admin-api:
-    build:
-      context: .
-      dockerfile: services/admin-api/Dockerfile
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_WHISPER_MODEL=${OPENAI_WHISPER_MODEL:-whisper-1}
+      - OPENAI_MAX_RETRIES=${OPENAI_MAX_RETRIES:-3}
+      - OPENAI_TIMEOUT=${OPENAI_TIMEOUT:-30}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_STREAM_NAME=transcription_segments
     ports:
-      - "${ADMIN_API_HOST_PORT:-8057}:8001"
-    env_file:
-      - .env
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=vexa
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - LOG_LEVEL=DEBUG
-    init: true
+      - "9090:9090"
+      - "9091:9091"
     depends_on:
       redis:
         condition: service_started
-      postgres:
-        condition: service_healthy
     networks:
       - vexa_default
     restart: unless-stopped
@@ -64,8 +37,7 @@ services:
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - DOCKER_HOST=unix://var/run/docker.sock
-      - DEVICE_TYPE=${DEVICE_TYPE}
-      - WHISPER_LIVE_URL=ws://whisperlive.internal/ws
+      - WHISPER_LIVE_URL=ws://openai-whisper:9090/ws
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     init: true
@@ -74,173 +46,48 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
-    networks:
-      - vexa_default
-    restart: unless-stopped
-
-  whisperlive:
-    profiles: ["gpu"]
-    build:
-      context: .
-      dockerfile: services/WhisperLive/Dockerfile.project
-    volumes:
-      - ./hub:/root/.cache/huggingface/hub
-      - ./services/WhisperLive/models:/app/models
-    environment:
-      # Use Redis Stream URL instead of WebSocket URL
-      - REDIS_STREAM_URL=redis://redis:6379/0/transcription_segments
-      # Keep the old URL for backward compatibility
-      - TRANSCRIPTION_COLLECTOR_URL=redis://redis:6379/0/transcription_segments
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_DB=0
-      - REDIS_STREAM_NAME=transcription_segments
-      - LANGUAGE_DETECTION_SEGMENTS=${LANGUAGE_DETECTION_SEGMENTS}
-      - VAD_FILTER_THRESHOLD=${VAD_FILTER_THRESHOLD}
-      - DEVICE_TYPE=${DEVICE_TYPE}
-    entrypoint: /bin/sh
-    command:
-      - "-c"
-      - |
-        if [ "$${DEVICE_TYPE}" = "cuda" ]; then
-          echo 'INFO: DEVICE_TYPE is cuda, starting WhisperLive GPU service.' &&
-          exec python3 /app/run_server.py --port 9090 --backend faster_whisper -fw /root/.cache/huggingface/hub/models--Systran--faster-whisper-medium/snapshots/08e178d48790749d25932bbc082711ddcfdfbc4f;
-        else
-          echo "INFO: DEVICE_TYPE is not cuda (it is '$${DEVICE_TYPE}'), WhisperLive GPU service will not start. Sleeping indefinitely." &&
-          sleep infinity;
-        fi
-    expose:
-      - "9090" #use for transcription web socket
-      - "9091" #use for health check
-    deploy:
-      replicas: 1 # Sets to 1 to avoid GPU contention
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["3"] # Ensure this is configurable or correct for your setup
-              capabilities: [gpu]
-    init: true
-    depends_on:
-      transcription-collector:
+      openai-whisper:
         condition: service_started
     networks:
       - vexa_default
-      - whispernet
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    # Add Traefik labels for service discovery
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.whisperlive-router.rule=Host(`whisperlive.internal`) && PathPrefix(`/ws`)"
-      - "traefik.http.routers.whisperlive-router.entrypoints=web"
-      - "traefik.http.services.whisperlive-service.loadbalancer.server.port=9090"
-      - "traefik.http.middlewares.whisperlive-ws-headers.headers.customrequestheaders.Connection=upgrade"
-      - "traefik.http.middlewares.whisperlive-ws-headers.headers.customrequestheaders.Upgrade=websocket"
-      - "traefik.http.routers.whisperlive-router.middlewares=whisperlive-ws-headers"
-      - "traefik.http.services.whisperlive-service.loadbalancer.healthcheck.path=/health"
-      - "traefik.http.services.whisperlive-service.loadbalancer.healthcheck.port=9091"
-      - "traefik.http.services.whisperlive-service.loadbalancer.healthcheck.scheme=http"
-      - "traefik.http.services.whisperlive-service.loadbalancer.healthcheck.interval=2s"
-      - "traefik.http.services.whisperlive-service.loadbalancer.healthcheck.timeout=1s"
 
-  # CPU version of WhisperLive for users without GPU
-  whisperlive-cpu:
-    profiles: ["cpu"]
+  api-gateway:
     build:
       context: .
-      dockerfile: services/WhisperLive/Dockerfile.cpu
-    volumes:
-      - ./hub:/root/.cache/huggingface/hub
-      - ./services/WhisperLive/models:/app/models
+      dockerfile: services/api-gateway/Dockerfile
     environment:
-      - REDIS_STREAM_URL=redis://redis:6379/0/transcription_segments
-      - TRANSCRIPTION_COLLECTOR_URL=redis://redis:6379/0/transcription_segments
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_DB=0
-      - REDIS_STREAM_NAME=transcription_segments
-      - LANGUAGE_DETECTION_SEGMENTS=${LANGUAGE_DETECTION_SEGMENTS}
-      - VAD_FILTER_THRESHOLD=${VAD_FILTER_THRESHOLD}
-      - DEVICE_TYPE=cpu
-    entrypoint: /bin/sh
-    deploy:
-      replicas: 2
-    command:
-      - "-c"
-      - |
-        if [ "$${DEVICE_TYPE}" = "cpu" ]; then
-          echo 'INFO: DEVICE_TYPE is cpu, starting WhisperLive CPU service.' &&
-          exec python3 /app/run_server.py --port 9090 --backend faster_whisper -fw /root/.cache/huggingface/hub/models--Systran--faster-whisper-tiny/snapshots/d90ca5fe260221311c53c58e660288d3deb8d356;
-        else
-          echo "INFO: DEVICE_TYPE is not cpu (it is '$${DEVICE_TYPE}'), WhisperLive CPU service will not start. Sleeping indefinitely." &&
-          sleep infinity;
-        fi
-    expose:
-      - "9090" #use for transcription web socket
-      - "9091" #use for health check
-    init: true
-    depends_on:
-      transcription-collector:
-        condition: service_started
-    networks:
-      - vexa_default
-      - whispernet
-    # Don't auto-start CPU version, users can manually start it
-    restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    # Add Traefik labels for service discovery
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.whisperlive-router.rule=Host(`whisperlive.internal`) && PathPrefix(`/ws`)"
-      - "traefik.http.routers.whisperlive-router.entrypoints=web"
-      - "traefik.http.services.whisperlive-service.loadbalancer.server.port=9090"
-      - "traefik.http.middlewares.whisperlive-ws-headers.headers.customrequestheaders.Connection=upgrade"
-      - "traefik.http.middlewares.whisperlive-ws-headers.headers.customrequestheaders.Upgrade=websocket"
-      - "traefik.http.routers.whisperlive-router.middlewares=whisperlive-ws-headers"
-      - "traefik.http.services.whisperlive-service.loadbalancer.healthcheck.path=/health"
-      - "traefik.http.services.whisperlive-service.loadbalancer.healthcheck.port=9091"
-      - "traefik.http.services.whisperlive-service.loadbalancer.healthcheck.scheme=http"
-      - "traefik.http.services.whisperlive-service.loadbalancer.healthcheck.interval=2s"
-      - "traefik.http.services.whisperlive-service.loadbalancer.healthcheck.timeout=1s"
-
-  # Replace nginx load-balancer with Traefik
-  traefik:
-    image: traefik:v2.10
+      - ADMIN_API_URL=http://admin-api:8001
+      - BOT_MANAGER_URL=http://bot-manager:8080
+      - TRANSCRIPTION_COLLECTOR_URL=http://transcription-collector:8000
     ports:
-      - "${TRAEFIK_WEB_HOST_PORT:-9090}:80" # Expose on host port
-      - "${TRAEFIK_DASHBOARD_HOST_PORT:-8085}:8080" # Traefik dashboard
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./traefik.toml:/etc/traefik/traefik.toml:ro
-    command:
-      - "--api.insecure=true"
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:80"
-      - "--log.level=DEBUG"
-      - "--providers.docker.constraints=Label(`traefik.enable`, `true`)"
-      - "--providers.docker.watch=true"
+      - "${API_GATEWAY_HOST_PORT:-8056}:8000"
+    depends_on:
+      - admin-api
+      - bot-manager
+      - transcription-collector
     networks:
-      vexa_default:
-        aliases:
-          - whisperlive.internal
-      whispernet:
-        aliases:
-          - whisperlive.internal
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost/ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      - vexa_default
+    restart: unless-stopped
+
+  admin-api:
+    build:
+      context: .
+      dockerfile: services/admin-api/Dockerfile
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=vexa
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN}
+    ports:
+      - "${ADMIN_API_HOST_PORT:-8057}:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - vexa_default
     restart: unless-stopped
 
   transcription-collector:
@@ -314,6 +161,4 @@ volumes:
 
 networks:
   vexa_default:
-    driver: bridge
-  whispernet:
     driver: bridge

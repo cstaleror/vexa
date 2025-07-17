@@ -1,0 +1,7 @@
+openai
+websockets
+redis
+asyncio-mqtt
+numpy
+soundfile
+webrtcvad

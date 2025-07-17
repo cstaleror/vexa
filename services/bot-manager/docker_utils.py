@@ -33,8 +33,6 @@ DOCKER_NETWORK = os.environ.get("DOCKER_NETWORK", "vexa_default")
 BOT_IMAGE_NAME = os.environ.get("BOT_IMAGE_NAME", "vexa-bot:dev")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
-DEVICE_TYPE = os.environ.get("DEVICE_TYPE", "cuda").lower()
-
 logger = logging.getLogger("bot_manager.docker_utils")
 
 # Global session for requests_unixsocket
@@ -255,6 +253,7 @@ async def start_bot_container(
         },
         "botManagerCallbackUrl": f"http://bot-manager:8080/bots/internal/callback/exited"
     }
+    
     # Remove keys with None values before serializing
     cleaned_config_data = {k: v for k, v in bot_config_data.items() if v is not None}
     bot_config_json = json.dumps(cleaned_config_data)
@@ -263,7 +262,7 @@ async def start_bot_container(
 
     # Get the WhisperLive URL from bot-manager's own environment.
     # This is set in docker-compose.yml to ws://whisperlive.internal/ws to go through Traefik.
-    whisper_live_url_for_bot = os.getenv('WHISPER_LIVE_URL')
+    whisper_live_url_for_bot = os.getenv('WHISPER_LIVE_URL', 'ws://whisperlive.internal/ws')
 
     if not whisper_live_url_for_bot:
         # This should ideally not happen if docker-compose.yml is correctly configured.
@@ -277,6 +276,7 @@ async def start_bot_container(
         f"BOT_CONFIG={bot_config_json}",
         f"WHISPER_LIVE_URL={whisper_live_url_for_bot}", # Use the URL from bot-manager's env
         f"LOG_LEVEL={os.getenv('LOG_LEVEL', 'INFO').upper()}",
+        "DISPLAY=:99",
     ]
 
     # Ensure absolute path for URL encoding here as well
