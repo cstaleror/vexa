@@ -22,6 +22,20 @@ submodules:
 	@echo "---> Initializing and updating Git submodules..."
 	@git submodule update --init --recursive
 
+# -------------------------------------------
+# Python virtual environment
+# -------------------------------------------
+
+venv:
+	@echo "---> Creating Python virtual environment (.venv) if needed..."
+	@if [ ! -d .venv ]; then \
+		python3 -m venv .venv && echo "Created .venv"; \
+	fi
+	@echo "---> Upgrading pip and installing requirements.txt..."
+	@.venv/bin/pip install --upgrade pip > /dev/null
+	@.venv/bin/pip install -r requirements.txt
+	@echo "---> Virtual environment ready. Activate with: source .venv/bin/activate"
+
 # Default bot image tag if not specified in .env
 BOT_IMAGE_NAME ?= vexa-bot:dev
 
@@ -140,14 +154,13 @@ endif
 		exit 1; \
 	fi
 
-# Download the Whisper model
-download-model:
+download-model: venv
 	@echo "---> Creating ./hub directory if it doesn't exist..."
 	@mkdir -p ./hub
 	@echo "---> Ensuring ./hub directory is writable..."
 	@chmod u+w ./hub
 	@echo "---> Downloading Whisper model (this may take a while)..."
-	@python download_model.py
+	@.venv/bin/python download_model.py
 
 # Build the standalone vexa-bot image
 # Uses BOT_IMAGE_NAME from .env if available, otherwise falls back to default
@@ -222,8 +235,14 @@ test: check_docker
 		echo "    Main API:  http://localhost:8056/docs"; \
 		echo "    Admin API: http://localhost:8057/docs"; \
 	fi
-	@chmod +x run_vexa_interaction.sh
-	@./run_vexa_interaction.sh
+	@echo "---> Streaming logs de openai-whisper-proxy mientras se ejecuta el test..."
+	@docker compose logs -f --tail 10 openai-whisper-proxy | sed 's/^/[proxy] /' & \
+		LOG_PID=$$!; \
+		ADMIN_TOKEN=$$(grep -E '^[[:space:]]*ADMIN_API_TOKEN=' .env | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'); \
+		[ -z "$$ADMIN_TOKEN" ] && ADMIN_TOKEN=token; \
+		chmod +x run_vexa_interaction.sh; \
+		ADMIN_TOKEN="$$ADMIN_TOKEN" ./run_vexa_interaction.sh; \
+		kill $$LOG_PID || true
 
 # --- Database Migration Commands ---
 

@@ -1,0 +1,5 @@
+fastapi==0.111
+uvicorn[standard]
+openai>=1.15         # SDK async
+websockets>=12.0
+aiofiles
